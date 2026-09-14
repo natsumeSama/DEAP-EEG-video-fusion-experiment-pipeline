@@ -1,0 +1,134 @@
+# ============================================================
+# Python
+# ============================================================
+
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+
+# ============================================================
+# Jupyter / Colab
+# ============================================================
+
+.ipynb_checkpoints/
+
+
+# ============================================================
+# Environment variables / secrets
+# ============================================================
+
+.env
+.env.*
+!.env.example
+
+# Local/private configuration
+secrets.*
+*.secret
+
+
+# ============================================================
+# Dataset files
+# ============================================================
+
+data/*
+
+# Keep documentation / placeholders
+!data/README.md
+!data/.gitkeep
+!data/eeg/
+!data/face_crops/
+
+data/eeg/*
+data/face_crops/*
+
+!data/eeg/.gitkeep
+!data/face_crops/.gitkeep
+
+
+# ============================================================
+# Generated preprocessing caches
+# ============================================================
+
+cache/
+*.npz
+*.npy
+*.pkl
+*.pickle
+
+
+# ============================================================
+# Model checkpoints
+# ============================================================
+
+*.pt
+*.pth
+*.ckpt
+
+
+# ============================================================
+# Generated experiment outputs
+# ============================================================
+
+outputs/*
+
+!outputs/.gitkeep
+!outputs/README.md
+
+!outputs/checkpoints/
+!outputs/metrics/
+!outputs/figures/
+!outputs/cache/
+
+outputs/checkpoints/*
+outputs/metrics/*
+outputs/figures/*
+outputs/cache/*
+
+!outputs/checkpoints/.gitkeep
+!outputs/metrics/.gitkeep
+!outputs/figures/.gitkeep
+!outputs/cache/.gitkeep
+
+
+# ============================================================
+# Archives / downloaded datasets
+# ============================================================
+
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+
+
+# ============================================================
+# IDE / OS
+# ============================================================
+
+.vscode/
+.idea/
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+
+# ============================================================
+# Temporary files
+# ============================================================
+
+*.tmp
+*.temp
+*.log
