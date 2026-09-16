@@ -1,3 +1,11 @@
+from PIL import Image
+
+from pathlib import Path
+from typing import Dict, List, Tuple, Any
+
+import torch
+from torch.utils.data import Dataset, DataLoader
+
 from .eeg import get_data
 
 class DEAPDataset(Dataset):
@@ -172,7 +180,6 @@ class DEAPDataset(Dataset):
             }
         return info
 
-
 def create_eeg_dataloaders_from_pairs(
     path: str | Path,
     mode: int,
@@ -256,6 +263,76 @@ def create_eeg_dataloaders_from_pairs(
 
     return train_loader, val_loader, train_dataset, val_dataset
 
+# =========================
+# LABELS: EEG -> IMAGE DICT
+# =========================
+def create_labels_dict_from_eeg_and_images(subjects, image_root, max_subject_id=22):
+    """
+    Build a label dictionary for video/image trials using EEG trial labels.
+
+    The image folders are expected to be named like:
+        s01_trial01
+        s01_trial02
+        ...
+
+    For each valid folder, this function matches:
+        subject id + trial id -> EEG label
+
+    Args:
+        subjects: EEG subject dictionary returned by the EEG pipeline.
+        image_root: Root directory containing image trial folders.
+        max_subject_id: Ignore subjects with id greater than this value.
+
+    Returns:
+        Nested dictionary of the form:
+            {
+                "s01": {
+                    "trial01": 0,
+                    "trial02": 1,
+                    ...
+                },
+                ...
+            }
+    """
+    image_root = Path(image_root)
+    labels_dict = {}
+
+    for folder in sorted(image_root.iterdir()):
+        if not folder.is_dir():
+            continue
+
+        parts = folder.name.split("_")
+        if len(parts) != 2:
+            continue
+
+        sid, trial_key = parts
+
+        # Skip subjects outside the allowed range.
+        if int(sid[1:]) > max_subject_id:
+            continue
+
+        # Skip if the subject does not exist in EEG labels.
+        if sid not in subjects:
+            continue
+
+        y = subjects[sid]["y"]
+        trial_idx = int(trial_key.replace("trial", "")) - 1
+
+        # Skip invalid trial indices.
+        if trial_idx < 0 or trial_idx >= len(y):
+            continue
+
+        if sid not in labels_dict:
+            labels_dict[sid] = {}
+
+        labels_dict[sid][trial_key] = int(y[trial_idx])
+
+    return labels_dict
+
+
+# =========================
+# BUILD IMAGE INDEX
+# =========================
 def build_trial_dict(root_dir):
     """
     Scan the image root directory and build:
@@ -322,101 +399,10 @@ def build_trial_dict(root_dir):
 
     return trial_dict, sample_index
 
-def create_labels_dict_from_eeg_and_images(subjects, image_root, max_subject_id=22):
-    """
-    Build a label dictionary for video/image trials using EEG trial labels.
 
-    The image folders are expected to be named like:
-        s01_trial01
-        s01_trial02
-        ...
-
-    For each valid folder, this function matches:
-        subject id + trial id -> EEG label
-
-    Args:
-        subjects: EEG subject dictionary returned by the EEG pipeline.
-        image_root: Root directory containing image trial folders.
-        max_subject_id: Ignore subjects with id greater than this value.
-
-    Returns:
-        Nested dictionary of the form:
-            {
-                "s01": {
-                    "trial01": 0,
-                    "trial02": 1,
-                    ...
-                },
-                ...
-            }
-    """
-    image_root = Path(image_root)
-    labels_dict = {}
-
-    for folder in sorted(image_root.iterdir()):
-        if not folder.is_dir():
-            continue
-
-        parts = folder.name.split("_")
-        if len(parts) != 2:
-            continue
-
-        sid, trial_key = parts
-
-        # Skip subjects outside the allowed range.
-        if int(sid[1:]) > max_subject_id:
-            continue
-
-        # Skip if the subject does not exist in EEG labels.
-        if sid not in subjects:
-            continue
-
-        y = subjects[sid]["y"]
-        trial_idx = int(trial_key.replace("trial", "")) - 1
-
-        # Skip invalid trial indices.
-        if trial_idx < 0 or trial_idx >= len(y):
-            continue
-
-        if sid not in labels_dict:
-            labels_dict[sid] = {}
-
-        labels_dict[sid][trial_key] = int(y[trial_idx])
-
-    return labels_dict
-
-def _normalize_pair(pair):
-    sid, trial = pair
-    return str(sid).lower(), int(trial)
-
-
-def _normalize_pairs(pairs):
-    return [_normalize_pair(pair) for pair in pairs]
-
-
-def _pair_from_meta(meta):
-    return (
-        str(meta["sid"]).lower(),
-        int(meta["trial"]),
-    )
-
-
-def _build_pair_to_index_map(dataset):
-    pair_to_idx = {}
-
-    for idx in range(len(dataset)):
-        *_, meta = dataset[idx]
-        pair = _pair_from_meta(meta)
-
-        if pair in pair_to_idx:
-            raise ValueError(
-                f"Duplicate pair found in dataset: {pair}"
-            )
-
-        pair_to_idx[pair] = idx
-
-    return pair_to_idx
-
+# =========================
+# DATASET
+# =========================
 class DEAPFaceTrialDataset(Dataset):
     """
     PyTorch dataset for video/image trials.
@@ -529,318 +515,3 @@ class DEAPFaceTrialDataset(Dataset):
         meta = {"sid": sid, "trial": trial_idx, "trial_key": trial}
 
         return x, y, meta
-
-class DEAPFusionTrialDataset(Dataset):
-    """
-    Fusion dataset that returns matched EEG and video samples for the same trial.
-
-    Each item corresponds to one shared pair:
-        (sid, trial_idx)
-
-    Returned values:
-        eeg_x   : EEG input for one trial
-        video_x : Video input for the same trial
-        y       : Single shared label
-        meta    : Dictionary containing:
-                  - 'sid'
-                  - 'trial'
-                  - 'eeg_meta'
-                  - 'video_meta'
-
-    Important:
-    - This dataset does not create train/validation splits by itself.
-    - It only consumes already prepared shared pairs.
-    - Alignment is enforced strictly so EEG and video always refer to
-      the exact same subject and trial.
-    """
-
-    def __init__(
-        self,
-        eeg_root,
-        image_root,
-        eeg_mode=2,
-        label_type=0,
-        num_frames=18,
-        allowed_pairs=None,
-        max_subject_id=22,
-        video_transform=None,
-        labels_dict=None,
-    ):
-        """
-        Initialize the fusion dataset.
-
-        Args:
-            eeg_root: Root path of EEG data
-            image_root: Root path of video/image data
-            eeg_mode: EEG mode used by DEAPDataset
-            label_type: Label type (for example valence or arousal)
-            num_frames: Number of frames used per video trial
-            allowed_pairs: Shared list of allowed (sid, trial_idx) pairs
-            max_subject_id: Maximum allowed subject id
-            video_transform: Optional transform for video frames
-            labels_dict: Optional precomputed video label dictionary
-        """
-        super().__init__()
-
-        # Normalize allowed pairs once so alignment checks are consistent.
-        self.allowed_pairs = None if allowed_pairs is None else _normalize_pairs(allowed_pairs)
-
-        # -------------------------
-        # EEG dataset
-        # -------------------------
-        self.eeg_dataset = DEAPDataset(
-            path=eeg_root,
-            mode=eeg_mode,
-            l=label_type,
-            allowed_pairs=self.allowed_pairs,
-        )
-
-        # -------------------------
-        # Video labels + transform
-        # -------------------------
-        # If labels are not already provided, derive them from the EEG side.
-        if labels_dict is None:
-            subjects = get_data(root=eeg_root, mode=0, l=label_type)
-            labels_dict = create_labels_dict_from_eeg_and_images(
-                subjects=subjects,
-                image_root=image_root,
-                max_subject_id=max_subject_id,
-            )
-
-        # If no video transform is given, use the default ResNet18 preprocessing.
-        if video_transform is None:
-            weights = models.ResNet18_Weights.DEFAULT
-            video_transform = weights.transforms()
-
-        # -------------------------
-        # Video dataset
-        # -------------------------
-        self.video_dataset = DEAPFaceTrialDataset(
-            root_dir=image_root,
-            labels_dict=labels_dict,
-            transform=video_transform,
-            num_frames=num_frames,
-            allowed_pairs=self.allowed_pairs,
-        )
-
-        # -------------------------
-        # Build alignment maps
-        # -------------------------
-        # Map each (sid, trial) pair to its index inside the EEG and video datasets.
-        self.eeg_pair_to_idx = _build_pair_to_index_map(self.eeg_dataset)
-        self.video_pair_to_idx = _build_pair_to_index_map(self.video_dataset)
-
-        eeg_pairs = set(self.eeg_pair_to_idx.keys())
-        video_pairs = set(self.video_pair_to_idx.keys())
-        common_pairs = eeg_pairs & video_pairs
-
-        # If no external pair filter is provided, use every pair that exists in both datasets.
-        if self.allowed_pairs is None:
-            self.pairs = sorted(common_pairs)
-        else:
-            allowed_set = set(self.allowed_pairs)
-
-            # Helpful checks to catch missing trials early.
-            missing_in_eeg = allowed_set - eeg_pairs
-            missing_in_video = allowed_set - video_pairs
-
-            if len(missing_in_eeg) > 0:
-                raise ValueError(
-                    f"Some allowed_pairs are missing in EEG dataset. "
-                    f"Example: {sorted(list(missing_in_eeg))[:5]}"
-                )
-
-            if len(missing_in_video) > 0:
-                raise ValueError(
-                    f"Some allowed_pairs are missing in video dataset. "
-                    f"Example: {sorted(list(missing_in_video))[:5]}"
-                )
-
-            # Keep exactly the order given by allowed_pairs.
-            self.pairs = [p for p in self.allowed_pairs if p in common_pairs]
-
-        if len(self.pairs) == 0:
-            raise ValueError("Fusion dataset is empty after alignment.")
-
-    def __len__(self):
-        """
-        Return the number of aligned fusion samples.
-        """
-        return len(self.pairs)
-
-    def __getitem__(self, idx):
-        """
-        Return one aligned EEG + video sample.
-
-        Steps:
-        - find the shared (sid, trial) pair
-        - fetch the corresponding EEG item
-        - fetch the corresponding video item
-        - verify that both point to the same pair
-        - verify that both labels match
-
-        Args:
-            idx: Dataset index
-
-        Returns:
-            eeg_x, video_x, eeg_y, meta
-
-        Raises:
-            RuntimeError: If alignment or label consistency fails
-        """
-        pair = self.pairs[idx]
-
-        eeg_idx = self.eeg_pair_to_idx[pair]
-        video_idx = self.video_pair_to_idx[pair]
-
-        eeg_x, eeg_y, eeg_meta = self.eeg_dataset[eeg_idx]
-        video_x, video_y, video_meta = self.video_dataset[video_idx]
-
-        eeg_pair = _pair_from_meta(eeg_meta)
-        video_pair = _pair_from_meta(video_meta)
-
-        # Strict alignment check: both modalities must refer to the same pair.
-        if eeg_pair != pair:
-            raise RuntimeError(f"EEG alignment error: expected {pair}, got {eeg_pair}")
-
-        if video_pair != pair:
-            raise RuntimeError(f"Video alignment error: expected {pair}, got {video_pair}")
-
-        eeg_label = int(eeg_y.item()) if torch.is_tensor(eeg_y) else int(eeg_y)
-        video_label = int(video_y.item()) if torch.is_tensor(video_y) else int(video_y)
-
-        # Both modalities must share the exact same label.
-        if eeg_label != video_label:
-            raise RuntimeError(
-                f"Label mismatch for pair {pair}: EEG={eeg_label}, VIDEO={video_label}"
-            )
-
-        meta = {
-            "sid": pair[0],
-            "trial": pair[1],
-            "eeg_meta": eeg_meta,
-            "video_meta": video_meta,
-        }
-
-        return eeg_x, video_x, eeg_y, meta
-
-def fusion_collate_fn(batch):
-    """
-    Custom collate function for fusion batches.
-
-    Why custom?
-    Because we want the metadata to stay as a simple Python list of dicts,
-    instead of being automatically merged into a tensor-like structure.
-
-    Args:
-        batch: List of dataset items
-
-    Returns:
-        eeg_x: Batched EEG tensor
-        video_x: Batched video tensor
-        y: Batched labels
-        meta_list: List of metadata dictionaries
-    """
-    eeg_x_list, video_x_list, y_list, meta_list = zip(*batch)
-
-    eeg_x = torch.stack(eeg_x_list, dim=0)
-    video_x = torch.stack(video_x_list, dim=0)
-    y = torch.stack(y_list, dim=0).long()
-
-    return eeg_x, video_x, y, list(meta_list)
-
-def create_fusion_dataloaders_from_pairs(
-    eeg_root,
-    image_root,
-    train_pairs,
-    val_pairs,
-    eeg_mode=2,
-    label_type=0,
-    num_frames=18,
-    batch_size=4,
-    num_workers=NUM_WORKERS,
-    max_subject_id=22,
-):
-    """
-    Build train and validation fusion dataloaders from shared trial pairs.
-
-    The important point is that both loaders are built from the exact same
-    pair definition used elsewhere in EEG-only and video-only experiments.
-
-    Args:
-        eeg_root: EEG root directory
-        image_root: Video/image root directory
-        train_pairs: Shared training pairs
-        val_pairs: Shared validation pairs
-        eeg_mode: EEG mode
-        label_type: Label type
-        num_frames: Number of video frames per trial
-        batch_size: Batch size
-        num_workers: Number of DataLoader workers
-        max_subject_id: Maximum allowed subject id
-
-    Returns:
-        train_loader, val_loader, train_dataset, val_dataset
-    """
-
-    # Build labels once and reuse them for both train and validation datasets.
-    subjects = get_data(root=eeg_root, mode=0, l=label_type)
-    labels_dict = create_labels_dict_from_eeg_and_images(
-        subjects=subjects,
-        image_root=image_root,
-        max_subject_id=max_subject_id,
-    )
-
-    weights = models.ResNet18_Weights.DEFAULT
-    video_transform = weights.transforms()
-
-    train_dataset = DEAPFusionTrialDataset(
-        eeg_root=eeg_root,
-        image_root=image_root,
-        eeg_mode=eeg_mode,
-        label_type=label_type,
-        num_frames=num_frames,
-        allowed_pairs=train_pairs,
-        max_subject_id=max_subject_id,
-        video_transform=video_transform,
-        labels_dict=labels_dict,
-    )
-
-    val_dataset = DEAPFusionTrialDataset(
-        eeg_root=eeg_root,
-        image_root=image_root,
-        eeg_mode=eeg_mode,
-        label_type=label_type,
-        num_frames=num_frames,
-        allowed_pairs=val_pairs,
-        max_subject_id=max_subject_id,
-        video_transform=video_transform,
-        labels_dict=labels_dict,
-    )
-
-    pin_mem = torch.cuda.is_available()
-    persistent = num_workers > 0
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=pin_mem,
-        persistent_workers=persistent,
-        drop_last=True,
-        collate_fn=fusion_collate_fn,
-    )
-
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_mem,
-        persistent_workers=persistent,
-        drop_last=False,
-        collate_fn=fusion_collate_fn,
-    )
-
-    return train_loader, val_loader, train_dataset, val_dataset
