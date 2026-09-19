@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import os
 
 MODEL_DISPLAY_NAMES = {
     "EEG": "EEG",
@@ -962,3 +963,289 @@ def compare_film_vs_concat_all_metrics(cv_fold_df):
         return pd.DataFrame()
 
     return pd.concat(rows, ignore_index=True)
+
+# =========================================================
+# COLLECT MAIN-SPLIT FiLM GAMMA / BETA / GATE ANALYSIS
+# =========================================================
+
+def collect_main_film_stats(all_fusion_sd):
+    """
+    Collect FiLM statistics from the main subject-dependent run.
+
+    Input:
+        all_fusion_sd = output of run_all_fusion_shared_split(...)
+
+    Output:
+        one row = one validation trial
+    """
+    rows = []
+
+    subject_results = all_fusion_sd.get("subject_results", {})
+
+    for sid, entry in subject_results.items():
+        film_stats = entry.get("film_stats")
+
+        if film_stats is None or len(film_stats) == 0:
+            continue
+
+        df = film_stats.copy()
+        df["subject"] = sid
+        df["model"] = "FUSION"
+        df["run_type"] = "main_subject_dependent"
+
+        rows.append(df)
+
+    if len(rows) == 0:
+        print(
+            "No FiLM stats found. Did you add film_stats to the "
+            "fusion return dictionary and rerun all_fusion_sd?"
+        )
+        return pd.DataFrame()
+
+    return pd.concat(rows, ignore_index=True)
+
+def build_main_film_summary_table(main_film_stats_df):
+    """
+    Compact summary table for the main split FiLM analysis.
+    """
+    if main_film_stats_df is None or len(main_film_stats_df) == 0:
+        return pd.DataFrame()
+
+    metrics = [
+        "gamma_mean",
+        "gamma_std",
+        "gamma_deviation_from_1",
+        "beta_mean",
+        "beta_std",
+        "beta_abs_mean",
+        "gate_mean",
+        "gate_std",
+        "relative_modulation",
+    ]
+
+    rows = []
+
+    for metric in metrics:
+        vals = pd.to_numeric(
+            main_film_stats_df[metric],
+            errors="coerce",
+        ).dropna()
+
+        rows.append({
+            "metric": metric,
+            "mean": float(vals.mean()),
+            "std": float(vals.std(ddof=1)),
+            "min": float(vals.min()),
+            "max": float(vals.max()),
+        })
+
+    return pd.DataFrame(rows)
+
+def _extract_training_stats_from_history(history):
+    """
+    Extract useful training-side summary metrics from a history dict.
+    """
+    if history is None:
+        return {
+            "best_train_acc": None,
+            "last_train_acc": None,
+            "best_train_loss": None,
+            "last_train_loss": None,
+        }
+
+    train_acc = history.get("train_acc", [])
+    train_loss = history.get("train_loss", [])
+
+    return {
+        "best_train_acc": float(max(train_acc)) if len(train_acc) > 0 else None,
+        "last_train_acc": float(train_acc[-1]) if len(train_acc) > 0 else None,
+        "best_train_loss": float(min(train_loss)) if len(train_loss) > 0 else None,
+        "last_train_loss": float(train_loss[-1]) if len(train_loss) > 0 else None,
+    }
+
+def build_subject_metrics_table(std_results):
+    """
+    Build one per-subject metrics table from standardized results,
+    including training-side summary metrics and train/val gaps.
+    """
+    rows = []
+
+    for sid, entry in std_results["subject_results"].items():
+        dm = entry.get("detailed_metrics") or {}
+        history = entry.get("history")
+
+        train_stats = _extract_training_stats_from_history(history)
+
+        best_val_acc = entry.get("best_val_acc")
+        last_val_acc = entry.get("last_val_acc")
+
+        best_train_acc = train_stats["best_train_acc"]
+        last_train_acc = train_stats["last_train_acc"]
+        best_train_loss = train_stats["best_train_loss"]
+        last_train_loss = train_stats["last_train_loss"]
+
+        row = {
+            "subject": sid,
+
+            # validation-side metrics
+            "best_val_acc": best_val_acc,
+            "last_val_acc": last_val_acc,
+            "acc": dm.get("acc"),
+            "balanced_acc": dm.get("balanced_acc"),
+            "precision": dm.get("precision"),
+            "recall": dm.get("recall"),
+            "f1": dm.get("f1"),
+            "loss": dm.get("loss"),
+
+            # training-side metrics
+            "best_train_acc": best_train_acc,
+            "last_train_acc": last_train_acc,
+            "best_train_loss": best_train_loss,
+            "last_train_loss": last_train_loss,
+
+            # train-vs-val gaps
+            "best_gap_acc": (
+                best_train_acc - best_val_acc
+                if best_train_acc is not None
+                and best_val_acc is not None
+                else None
+            ),
+
+            "last_gap_acc": (
+                last_train_acc - last_val_acc
+                if last_train_acc is not None
+                and last_val_acc is not None
+                else None
+            ),
+
+            "selected_stage": entry.get("selected_stage"),
+            "save_path": entry.get("save_path"),
+        }
+
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+
+    if len(df) == 0:
+        return df
+
+    return df.sort_values("subject").reset_index(drop=True)
+
+def build_summary_table(std_results):
+    """
+    Build a one-row summary table with mean/std/min/max over subjects.
+    """
+    df = build_subject_metrics_table(std_results)
+
+    if len(df) == 0:
+        return pd.DataFrame()
+
+    metric_cols = [
+        # validation-side
+        "best_val_acc",
+        "last_val_acc",
+        "acc",
+        "balanced_acc",
+        "precision",
+        "recall",
+        "f1",
+        "loss",
+
+        # training-side
+        "best_train_acc",
+        "last_train_acc",
+        "best_train_loss",
+        "last_train_loss",
+
+        # gaps
+        "best_gap_acc",
+        "last_gap_acc",
+    ]
+
+    summary = {}
+
+    for col in metric_cols:
+        vals = pd.to_numeric(
+            df[col],
+            errors="coerce",
+        ).dropna()
+
+        if len(vals) == 0:
+            continue
+
+        summary[f"{col}_mean"] = float(vals.mean())
+
+        summary[f"{col}_std"] = (
+            float(vals.std(ddof=1))
+            if len(vals) > 1
+            else 0.0
+        )
+
+        summary[f"{col}_min"] = float(vals.min())
+        summary[f"{col}_max"] = float(vals.max())
+
+    summary["model_name"] = std_results.get("model_name")
+    summary["source_type"] = std_results.get("source_type")
+    summary["split_mode"] = std_results.get("split_mode")
+
+    return pd.DataFrame([summary])
+
+def build_confusion_matrix_table(std_results, sid):
+    """
+    Return the confusion matrix of one subject as a DataFrame.
+    """
+    entry = std_results["subject_results"][sid]
+    dm = entry.get("detailed_metrics") or {}
+
+    cm = np.array(
+        dm.get(
+            "confusion_matrix",
+            [[0, 0], [0, 0]],
+        )
+    )
+
+    return pd.DataFrame(
+        cm,
+        index=["true_0", "true_1"],
+        columns=["pred_0", "pred_1"],
+    )
+
+def save_tables_to_csv(
+    std_results,
+    out_dir="metrics_exports",
+    prefix=None,
+):
+    """
+    Save the per-subject table and summary table to CSV.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    if prefix is None:
+        prefix = std_results["model_name"].lower()
+
+    subject_df = build_subject_metrics_table(std_results)
+    summary_df = build_summary_table(std_results)
+
+    subject_path = os.path.join(
+        out_dir,
+        f"{prefix}_subject_metrics.csv",
+    )
+
+    summary_path = os.path.join(
+        out_dir,
+        f"{prefix}_summary_metrics.csv",
+    )
+
+    subject_df.to_csv(
+        subject_path,
+        index=False,
+    )
+
+    summary_df.to_csv(
+        summary_path,
+        index=False,
+    )
+
+    print("Saved:", subject_path)
+    print("Saved:", summary_path)
+
