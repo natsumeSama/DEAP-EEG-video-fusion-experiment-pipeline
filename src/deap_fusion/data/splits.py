@@ -509,7 +509,7 @@ def get_shared_split(sid=None, split_mode="subject_dependent"):
     )
 
 # =========================================================
-# 5-FOLD CROSS-VALIDATION SHARED SPLITS
+# K-FOLD CROSS-VALIDATION SHARED SPLITS
 # =========================================================
 
 def _label_counts_from_pairs(pairs, pair_to_label):
@@ -530,17 +530,17 @@ def init_shared_cv_splits(
     label_type=LABEL_TYPE,
     max_subject_id=MAX_SUBJECT_ID,
     split_mode="subject_dependent",
-    n_splits=5,
+    n_splits=4,
     seed=SEED,
 ):
     """
-    Create 5-fold CV splits once.
+    Create K-fold CV splits once.
 
     For subject_dependent:
-        For each subject, split that subject's trials into 5 folds.
+        For each subject, split that subject's trials into n_splits folds.
 
     For random_all:
-        Split all available trials into 5 global folds.
+        Split all available trials into n_splits global folds.
 
     Each fold is stored globally, so all models reuse the same train/val pairs.
     """
@@ -562,7 +562,7 @@ def init_shared_cv_splits(
     SHARED_CV_SPLITS = {fold: {} for fold in range(n_splits)}
 
     # -----------------------------------------------------
-    # Case 1: one global 5-fold CV over all trials
+    # Case 1: one global K-fold CV over all trials
     # -----------------------------------------------------
     if split_mode == "random_all":
         pairs = sorted(all_pairs)
@@ -614,7 +614,7 @@ def init_shared_cv_splits(
         return SHARED_CV_SPLITS
 
     # -----------------------------------------------------
-    # Case 2: subject-dependent 5-fold CV
+    # Case 2: subject-dependent K-fold CV
     # -----------------------------------------------------
     for sid_num in range(1, max_subject_id + 1):
         sid = f"s{sid_num:02d}"

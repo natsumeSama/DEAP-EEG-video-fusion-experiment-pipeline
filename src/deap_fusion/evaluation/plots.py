@@ -1,7 +1,3 @@
-import numpy as np
-import matplotlib.pyplot as plt
-
-from .results import MODEL_DISPLAY_NAMES
 import math
 
 import numpy as np
@@ -15,37 +11,6 @@ from .results import (
     build_subject_metrics_table,
     build_prediction_table,
 )
-
-def plot_cv_summary_bar(cv_summary_df, metric="best_val_acc", title=None):
-    """
-    Bar plot of final mean ± std across folds.
-    """
-    mean_col = f"{metric}_mean"
-    std_col = f"{metric}_std"
-
-    df = cv_summary_df.copy()
-    df = df.sort_values(mean_col, ascending=False)
-
-    labels = df["model_display"].tolist()
-    means = df[mean_col].values
-    stds = df[std_col].values
-
-    x = np.arange(len(labels))
-
-    plt.figure(figsize=(10, 5))
-    plt.bar(x, means, yerr=stds, capsize=5)
-
-    plt.xticks(x, labels, rotation=25, ha="right")
-    plt.ylabel(metric)
-    plt.ylim(0, 1.05)
-
-    if title is None:
-        title = f"4-fold CV performance - {metric}"
-
-    plt.title(title)
-    plt.grid(axis="y", alpha=0.3)
-    plt.tight_layout()
-    plt.show()
 
 # =========================================================
 # VISUALIZATION 1: FINAL CV BARPLOT

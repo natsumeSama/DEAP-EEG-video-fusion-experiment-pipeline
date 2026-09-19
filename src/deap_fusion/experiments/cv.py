@@ -57,7 +57,7 @@ def run_Kfold_cv_all_models(
     batch_size=BATCH_SIZE,
 ):
     """
-    Run the full 5-fold CV pipeline.
+    Run the full K-fold cross-validation pipeline.
 
     For each fold:
         1. Activate shared fold splits

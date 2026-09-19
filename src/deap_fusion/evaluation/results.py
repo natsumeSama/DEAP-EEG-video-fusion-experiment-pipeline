@@ -892,78 +892,6 @@ def compare_film_vs_concat_all_metrics(cv_fold_df):
         ignore_index=True,
     )
 
-def compare_all_metrics(cv_fold_df, baselines=("VIDEO", "CONCAT", "EEG")):
-    """
-    Compare all models against selected baselines using several metrics.
-    """
-    metrics = [
-        "best_val_acc",
-        "acc",
-        "balanced_acc",
-        "f1",
-        "precision",
-        "recall",
-    ]
-
-    all_rows = []
-
-    for metric in metrics:
-        if metric not in cv_fold_df.columns:
-            continue
-
-        for baseline in baselines:
-            if baseline not in cv_fold_df["model"].unique():
-                continue
-
-            comp_df = compare_cv_models(
-                cv_fold_df,
-                metric=metric,
-                baseline=baseline,
-            )
-
-            comp_df["baseline"] = baseline
-            comp_df["metric"] = metric
-
-            all_rows.append(comp_df)
-
-    if len(all_rows) == 0:
-        return pd.DataFrame()
-
-    return pd.concat(all_rows, ignore_index=True)
-
-def compare_film_vs_concat_all_metrics(cv_fold_df):
-    """
-    Direct FiLM vs Concat comparison for all useful metrics.
-    """
-    metrics = [
-        "best_val_acc",
-        "acc",
-        "balanced_acc",
-        "f1",
-        "precision",
-        "recall",
-    ]
-
-    rows = []
-
-    for metric in metrics:
-        if metric not in cv_fold_df.columns:
-            continue
-
-        comp = compare_two_cv_models(
-            cv_fold_df,
-            model_a="FUSION",
-            model_b="CONCAT",
-            metric=metric,
-        )
-
-        rows.append(comp)
-
-    if len(rows) == 0:
-        return pd.DataFrame()
-
-    return pd.concat(rows, ignore_index=True)
-
 # =========================================================
 # COLLECT MAIN-SPLIT FiLM GAMMA / BETA / GATE ANALYSIS
 # =========================================================
@@ -1209,6 +1137,25 @@ def build_confusion_matrix_table(std_results, sid):
         index=["true_0", "true_1"],
         columns=["pred_0", "pred_1"],
     )
+
+def build_prediction_table(std_results, sid):
+    """
+    Build a DataFrame containing y_true and y_pred for one subject.
+    """
+    entry = std_results["subject_results"][sid]
+    dm = entry.get("detailed_metrics") or {}
+
+    y_true = dm.get("y_true", [])
+    y_pred = dm.get("y_pred", [])
+
+    return pd.DataFrame({
+        "y_true": y_true,
+        "y_pred": y_pred,
+        "correct": [
+            int(a == b)
+            for a, b in zip(y_true, y_pred)
+        ],
+    })
 
 def save_tables_to_csv(
     std_results,

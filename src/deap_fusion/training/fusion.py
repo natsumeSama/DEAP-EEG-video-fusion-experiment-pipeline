@@ -3,7 +3,6 @@ import pandas as pd
 import torch
 from torch import nn
 
-from IPython.display import display
 
 from sklearn.metrics import (
     confusion_matrix,
@@ -716,7 +715,7 @@ def run_fusion_experiment_shared_split(
     film_summary_df = summarize_film_modulation_stats(film_stats_df)
 
     print("\nFiLM modulation summary:")
-    display(film_summary_df)
+    print(film_summary_df)
 
 
 
