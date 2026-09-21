@@ -9,4 +9,3 @@ Pillow
 opencv-python
 tqdm
 gdown
-python-dotenv
